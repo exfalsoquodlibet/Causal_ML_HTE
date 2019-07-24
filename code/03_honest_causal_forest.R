@@ -192,3 +192,153 @@ fruit_hcf <- grf::causal_forest(
 # save the model ---
 saveRDS(fruit_hcf, "fruit_hcf.rds")
 
+
+# let's take a look at the model object ------
+
+summary(fruit_hcf)
+
+# parameters that were tunable
+fruit_hcf$tunable.params   # optimal values of tuning parameters
+fruit_hcf$tuning.output   
+
+head(fruit_hcf$X.orig) # original set of covariates
+head(fruit_hcf$W.orig) # original treatment level
+head(fruit_hcf$W.hat)  # predicted treatment level allocation ("propensity score")
+head(fruit_hcf$Y.orig) # original outcome
+head(fruit_hcf$Y.hat)  # predicted outcome (marginalised over treatment)
+
+
+
+
+
+
+# Out-Of-Bag (OOB) predictions for train examples ------
+
+# For each training unit/case ("example"), 
+# all the trees that did not use this example during training (~ 1/3 of trees) are identified 
+# (the case was 'out-of-bag', or OOB). 
+# Then, a prediction of the treatment effect for the example is made using only these trees. 
+# These out-of-bag predictions can be useful in understanding the model's goodness-of-fit
+
+train_y_hats <- predict(
+      object = fruit_hcf,
+      estimate.variance = TRUE   # for confidence interval (IMPORTANT)
+)
+
+str(train_y_hats)
+
+### TO DO:
+# Explore goodness of fit !
+
+
+# Individual-level conditional treatment effects and their associated variance estimates ---
+
+#let's plot them
+ggplot(train_y_hats,
+      mapping = aes(
+            x = rank(predictions), 
+            y = predictions
+      )
+      ) +
+      geom_point() +
+      labs(x = "Train examples", y = "Estimated Treatment Effect") +
+      theme_light() +
+      geom_errorbar(
+            mapping = aes(
+                  ymin = train_y_hats$predictions - 1.96 * sqrt(train_y_hats$variance.estimates),
+                  ymax = train_y_hats$predictions + 1.96 * sqrt(train_y_hats$variance.estimates)
+            )
+      )
+
+# Yep, there clearly seem to be heterogenous treatment effects !
+
+
+
+# What is driving the (heterogenous treatment effect)? ------
+
+# Rank of important covariate ---
+# danger of biased approach, as it has a tendency to inflate the importance of continuous features or high-cardinality categorical variables...
+
+fruit_hcf %>% 
+      variable_importance() %>% 
+      as.data.frame() %>% 
+      mutate(variable = colnames(fruit_hcf$X.orig)) %>% 
+      arrange(desc(V1))
+
+# correctly identified "overweight" and "race: africanAm" as two top covariates driving HTE
+
+# Plot the relationships ---
+# between the top important variables and the predicted treatment effects
+
+# add predicted individual-level treatment effects to original data
+train_fruit_df$pred_treatm_effect <- train_y_hats$predictions
+train_fruit_df$pred_se_treatm_effect <- sqrt(train_y_hats$variance.estimates)
+
+
+# overweight
+ggplot(
+      train_fruit_df, 
+      aes(x = as.factor(overweight), 
+            y = pred_treatm_effect, 
+            fill= as.factor(overweight)
+      )
+) +
+      geom_violin(draw_quantiles=.5, scale = 'count') +
+      theme_light()
+
+
+# race
+ggplot(
+      train_fruit_df, 
+      aes(x = as.factor(racename), 
+            y = pred_treatm_effect, 
+            fill=as.factor(racename)
+            )
+      ) +
+      geom_violin(draw_quantiles=.5, scale = 'count') +
+      theme_light()
+
+
+# household income
+ggplot(train_fruit_df, aes(x = hhinc, y = pred_treatm_effect)) +
+      geom_point() +
+      #geom_smooth(method = "lm", span = 1) +
+      geom_smooth(method = "loess", span = 1) +   #smooth local regression
+      theme_light()
+# looks like some interaction may begoing on
+
+
+
+
+# HTE for subgroups in the population ------
+
+# Estimating average treatmen effects (ATE) ------
+grf::average_treatment_effect(fruit_hcf, target.sample = "all")
+grf::average_treatment_effect(fruit_hcf, target.sample = "treated")
+grf::average_treatment_effect(fruit_hcf, target.sample = "control")
+
+# Estimating HTE / CATE ------
+grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'overweight'] ==1 )
+grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'overweight'] ==0 )
+grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'age'] < 5 )
+grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'racename'] == "africanAm" )
+grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'racename'] == "africanAm" & train_fruit_df[, 'overweight'] ==1 )
+grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'racename'] == "africanAm" & train_fruit_df[, 'overweight'] ==0 )
+
+
+### TO DO ------
+
+# 1) functions to estimate HTE for combinnations of covariates with confidence intervals
+# 2) function to plot (1)
+
+
+
+
+
+
+
+
+### Predict on potential future targets ------
+# TO DO!
+
+
