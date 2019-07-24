@@ -6,14 +6,18 @@
 # Packages #
 # -------- #
 
-pckgs <- c("dplyr", "tidyverse", "stringr", 
-           "simstudy")
+pckgs <- c(
+      "dplyr", 
+      "tidyverse", 
+      "stringr",
+      "ggplot2",
+      "simstudy"   # see here for Ref: https://www.rdatagen.net/page/define_and_gen/  https://cran.rstudio.com/web/packages/simstudy/vignettes/simstudy.html
+      )
+
 lapply(pckgs, require, character.only=TRUE)
 
-# see here for Ref: https://www.rdatagen.net/page/define_and_gen/ 
-# https://cran.rstudio.com/web/packages/simstudy/vignettes/simstudy.html
 
-set.seed(777)
+
 
 
 ### I took inspiration from this study:
@@ -32,9 +36,13 @@ set.seed(777)
 
 
 
+set.seed(777)
+
+
 ### User input ------
 
-n_sample <- 1000
+n_sample <- 10000
+
 
 ### Create covariates ------
 
@@ -89,33 +97,17 @@ study1[['chose_fruit']] <- with(study1, ifelse(
   sample(c(1, 0), nrow(study1), TRUE, c(.70, .30)), ifelse(
     race == 2 & treatment == 1,
          sample(c(1, 0), nrow(study1), TRUE, c(.15, .85)),
-         sample(c(1, 0), nrow(study1), TRUE, c(.50, .50))
+         sample(c(1, 0), nrow(study1), TRUE, c(.55, .45))
   )))
 
-  
-study1 %>% group_by(overweight, race, treatment) %>% summarise(mean(chose_fruit, na.rm=TRUE), n = n())
 
-
-
-
-
-# Let's take a look at the treatment effect in the descriptive
-View(study1)
-
-# Average treatment effect
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment)
-
-# Conditional treatment effects
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, overweight)
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, race)
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, overweight, race)
-
-
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, male)
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, statesch)
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, race, statesch )
-CATE_summary_fun(study1, outcome_binary=TRUE, chose_fruit, treatment, siblings )
-
+# Let's take a look at proportion of children who chose fruits  
+study1 %>% 
+      group_by(overweight, race, treatment) %>% 
+      summarise(
+            mean(chose_fruit, na.rm=TRUE), 
+            n = n()
+            )
 
 
 
@@ -133,21 +125,21 @@ study1 %>%
 study1 %>%
   mutate(
     treatment = factor(treatment),
-    gender = factor(male, levels=c(0,1), labels = c('F', 'M')),
-    racename = factor(race, levels=c(1,2,3,4), labels=c('caucasian', 'africanAm', 'asian', 'hispanic'))) %>%
-  ggplot(.) +
-  geom_bar(aes(x = treatment, fill=racename), stat = 'count') +
-  theme_light()
+    gender = factor(male, levels=c(0,1), labels = c('F', 'M'))
+        ) %>%
+      ggplot(.) +
+      geom_bar(aes(x = treatment, fill=gender), stat = 'count') +
+      theme_light()
 
 
 study1 %>%
   mutate(
     treatment = factor(treatment),
-    gender = factor(male, levels=c(0,1), labels = c('F', 'M')),
     racename = factor(race, levels=c(1,2,3,4), labels=c('caucasian', 'africanAm', 'asian', 'hispanic'))) %>%
   ggplot(.) +
-  geom_bar(aes(x = treatment, fill=gender), stat = 'count') +
+  geom_bar(aes(x = treatment, fill=racename), stat = 'count') +
   theme_light()
+
 
 # but not by - e.g., statesch
 study1 %>%
@@ -160,80 +152,9 @@ study1 %>%
   theme_light()
 
 
+### Save data ------
+saveRDS(study1, "data/synth_hte_df.rds")
 
 
-
-# https://roamanalytics.com/2016/10/28/are-categorical-variables-getting-lost-in-your-random-forests/ 
-# RF will tend to favour highly variable continuous predictorsor (and also categorical predictors with many more levels than the others) because there are more opportunities to partition the data. 
-# 
-
-study1 <- study1 %>%
-  mutate(
-    s_age = scale(age, center = TRUE, scale = TRUE),
-    s_hhinc = scale(hhinc, center = TRUE, scale = TRUE)
-  )
-
-
-
-
-# Fit the causal model ------
-
-trans_cf <- grf::causal_forest(
-      # dummy-code categorical variables
-      X = model.matrix(~ ., data = study1[, ! names(study1) %in% c('chose_fruit', 'treatment', 'cid', 'age', 'hhinc')]),
-      
-      # outcome variable
-      Y = study1$chose_fruit,
-      
-      # treatment variable
-      W = study1$treatment,
-      
-      mtry = NULL, #default, number of variables tried for each split
-      num.trees = 5000,
-      min.node.size = NULL, # minimum number of cases in each node (end leaf)
-      
-      honesty = TRUE, # default >>> honest sub-sample splitting
-      honesty.fraction = NULL, # default, 50% in splitting sub-sample, 50% in estimating sub-sumple
-      
-      tune.parameters = TRUE, #parameters tuned by cross-validation
-      seed = 123
-      
-)
-
-
-summary(trans_cf)
-
-trans_cf$num.trees
-
-# parameters that were tunable
-trans_cf$tunable.params
-trans_cf$tuning.output   #Optimal values of tuning parameters
-
-# Rank of important covariate -------
-# biased approach, as it has a tendency to inflate the importance of continuous features or high-cardinality categorical variables...
-
-trans_cf %>% 
-      variable_importance() %>% 
-      as.data.frame() %>% 
-      mutate(variable = colnames(trans_cf$X.orig)) %>% 
-      arrange(desc(V1))
-
-# Estimating average treatmen effects ------
-grf::average_treatment_effect(trans_cf, target.sample = "all")
-grf::average_treatment_effect(trans_cf, target.sample = "treated")
-grf::average_treatment_effect(trans_cf, target.sample = "control")
-
-grf::average_treatment_effect(trans_cf, target.sample = "all", subset=study1[, 'overweight'] ==1 )
-grf::average_treatment_effect(trans_cf, target.sample = "all", subset=study1[, 'overweight'] ==0 )
-grf::average_treatment_effect(trans_cf, target.sample = "all", subset=study1[, 'age'] < 5 )
-grf::average_treatment_effect(trans_cf, target.sample = "all", subset=study1[, 'race'] == 2 )
-
-
-
-
-# Reference:
-# https://github.com/grf-labs/grf
-# https://www.researchgate.net/publication/330266878_The_influence_of_maternal_agency_on_severe_child_undernutrition_in_conflict-ridden_Nigeria_Modeling_heterogeneous_treatment_effects_with_machine_learning
-# https://github.com/grf-labs/grf/issues/238
-# https://github.com/grf-labs/grf/blob/master/r-package/grf/R/causal_forest.R
-# http://statistics.berkeley.edu/sites/default/files/tech-reports/666.pdf 
+### Clean up ------
+rm(list=c("def", "study1", "pckgs"))
