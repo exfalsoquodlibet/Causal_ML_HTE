@@ -8,9 +8,6 @@
 # Packages ---
 
 pckgs <- c("dplyr", 
-      "tidyverse", 
-      "stringr", 
-      "personalized", 
       "grf",
       "ggplot2")
 
