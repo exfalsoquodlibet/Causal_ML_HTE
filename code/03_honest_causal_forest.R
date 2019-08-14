@@ -173,6 +173,8 @@ fruit_hcf <- grf::causal_forest(
       
       num.trees = ntrees,
       
+      compute.oob.predictions = TRUE,
+      
       # parameters that will be tuned via cross-validation
       mtry = NULL, #default, number of variables tried for each split
       min.node.size = NULL, # minimum number of cases in each node (end leaf)
@@ -192,6 +194,8 @@ fruit_hcf <- grf::causal_forest(
 # save the model ---
 saveRDS(fruit_hcf, "fruit_hcf.rds")
 
+
+fruit_hcf <- readRDS("fruit_hcf.rds")
 
 # let's take a look at the model object ------
 
@@ -306,7 +310,7 @@ ggplot(train_fruit_df, aes(x = hhinc, y = pred_treatm_effect)) +
       geom_smooth(method = "loess", span = 1) +   #smooth local regression
       theme_light()
 # looks like some interaction may begoing on
-
+# TO DO iterate: add color based on guess covariate
 
 
 
@@ -326,14 +330,126 @@ grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fru
 grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fruit_df[, 'racename'] == "africanAm" & train_fruit_df[, 'overweight'] ==0 )
 
 
+
+# Get conditional average treatment effects for each level of each categorical covariate ------
+# adapted from: https://github.com/grf-labs/grf/issues/238
+
+train_fruit_df <- train_fruit_df %>%
+      mutate(
+            malef = factor(male, levels=c(0,1), labels=c('female', 'male')),
+            overweightf = factor(overweight, levels=c(0,1), labels=c('non-overweight', 'overweight')),
+            siblingsf = factor(siblings, levels=c(0,1), labels=c('no_siblings', 'yes_siblings')),
+            stateschf = factor(statesch, levels=c(0,1), labels=c('no_statesch', 'yes_statesch'))
+      )
+
+
+cates <- data.frame(var = rep(NA, 100), level = NA, cate = NA, lb = NA, ub = NA)
+counter <- 1
+cov_names <- names(train_fruit_df[, c(13:17)])
+for (i in seq_along(cov_names)) {
+      for (j in levels(train_fruit_df[[cov_names[i]]])) {
+            tmp <- grf::average_treatment_effect(
+                  fruit_hcf, 
+                  subset = train_fruit_df[complete.cases(train_fruit_df), cov_names[i]] == j
+            )
+            cates$var[[counter]] <- cov_names[i]
+            cates$level[[counter]] <- j
+            cates$cate[[counter]] <- tmp[[1]]
+            cates$lb[[counter]] <- tmp[[1]] - 1.96 * tmp[[2]]
+            cates$ub[[counter]] <- tmp[[1]] + 1.96 * tmp[[2]]
+            counter <- counter + 1
+      }
+}
+cates <- cates[complete.cases(cates), ]
+
+cates
+
+
+# vizualise them
+ggplot(cates, aes(x = level, y = cate, color = var)) +
+      theme_light() +
+      theme(
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            strip.text.y = element_text(colour = "black"),
+            strip.background = element_rect(colour = NA, fill = NA),
+            legend.position = "none"
+      ) +
+      geom_point() +
+      geom_errorbar(aes(ymin = lb, ymax = ub), width = .2) +
+      geom_hline(yintercept = 0, linetype = 3) +
+      facet_grid(var ~ ., scales = "free_y") +
+      coord_flip()
+
+
+
+
+# CATE for two-way interactions between categorical covariates ------
+
+cates2 <- data.frame(var1 = rep(NA, 200), level1 = NA, var2 = rep(NA, 200), level2 = NA, cate = NA, lb = NA, ub = NA)
+counter <- 1
+cov_names <- names(train_fruit_df[, c(13:17)])
+for (i in seq_along(cov_names)) {
+      if(seq_along(cov_names)[i] == length(cov_names)) next
+      else{
+            for (p in seq_along(cov_names)[-c(1:i)]) {
+                  for (j in levels(train_fruit_df[[cov_names[i]]])) {
+                        for(q in levels(train_fruit_df[[cov_names[p]]])) {
+                              
+                              print(levels(train_fruit_df[[cov_names[i]]]))
+                              print(levels(train_fruit_df[[cov_names[p]]]))
+                              
+                              tmp <- grf::average_treatment_effect(
+                                    fruit_hcf, 
+                                    subset = train_fruit_df[complete.cases(train_fruit_df), cov_names[i]] == j & 
+                                          train_fruit_df[complete.cases(train_fruit_df), cov_names[p]] == q
+                              )
+                              cates2$var1[[counter]] <- cov_names[i]
+                              cates2$level1[[counter]] <- j
+                              cates2$var2[[counter]] <- cov_names[p]
+                              cates2$level2[[counter]] <- q
+                              cates2$cate[[counter]] <- tmp[[1]]
+                              cates2$lb[[counter]] <- tmp[[1]] - 1.96 * tmp[[2]]
+                              cates2$ub[[counter]] <- tmp[[1]] + 1.96 * tmp[[2]]
+                              counter <- counter + 1
+                        }
+                        
+                  }
+            }
+      }
+      
+}
+cates2 <- cates2[complete.cases(cates2), ]
+
+cates2
+
+# vizualise them ---
+cates2 <- cates2 %>%
+      mutate(inter_var = interaction(level1, level2, sep=' & '))
+
+ggplot(cates2, aes(x = inter_var, y = cate, color = inter_var)) +
+      theme_light() +
+      theme(
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            strip.text.y = element_text(colour = "black"),
+            strip.background = element_rect(colour = NA, fill = NA),
+            legend.position = "none"
+      ) +
+      geom_point() +
+      geom_errorbar(aes(ymin = lb, ymax = ub), width = .2) +
+      geom_hline(yintercept = 0, linetype = 3) +
+      facet_grid(var1 + var2 ~ ., scales = "free_y") +
+      coord_flip()
+
+
+
+
 ### TO DO ------
 
-# 1) functions to estimate HTE for combinnations of covariates with confidence intervals
+# Add CATE for quantiles of numeric covariates
+# 1) functions to estimate HTE for combinations of covariates with confidence intervals
 # 2) function to plot (1)
-
-
-
-
 
 
 
