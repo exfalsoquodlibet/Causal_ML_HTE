@@ -1,3 +1,10 @@
+#' Calculate point estimate and confidence interval bounds of the conditional treatment effect ('cate') at each level of the two-way interactions among all covariates 
+#'
+#' @param grf_forest An object of class 'causal_forest grf'
+#' @param dataset Dataset
+#' @param cov_idx A numeric vector containing the column indeces of the categorical covariates 
+#' @return A dataframe containing the point estimate and confidence interval bounds of the conditional treatment effect ('cate') at each level of the two-way interactions among all covariates 
+
 get_cate_twoway_inter <- function(
       grf_forest, 
       dataset, 
