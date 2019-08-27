@@ -1,4 +1,12 @@
-# Function to calculate Conditional Average Treatment Effects #
+#' Function to calculate Conditional Average Treatment Effects 
+#'
+#' @param data Dataset
+#' @param outcome_binary Logical value for whether the outcome is binary or not (default is TRUE)
+#' @param outcome_var Name of outcome variable
+#' @param outcome_var Name of treatment variable (must be coded as numerically as 0 and 1)
+#' @param ... Names of covariates
+#' @return Condiional Treatment Effects (CATE) point estimates and their SEs
+
 
 CATE_summary_fun <- function(data, outcome_binary=TRUE, outcome_var, treat_var,  ...){
       
@@ -6,8 +14,18 @@ CATE_summary_fun <- function(data, outcome_binary=TRUE, outcome_var, treat_var, 
       treat_var <- enquo(treat_var)
       group_covars <- enquos(...)
       
-      # TODO
-      # add checking that terat_var has been coded numerically, with values 1 and 0
+      
+      # load dependencies
+      lapply(c('dplyr'), require, character.only=TRUE)
+      
+      
+      # Checking that treat_var has been coded numerically, with values 1 and 0
+      data %>% 
+            dplyr::pull(!!treat_var) %>%
+            {
+                  if(! all(. %in% c(0,1))) stop("treat_var must be coded numerically, with values 1 and 0 only")
+            }
+      
       
       tmp <- data %>% 
             dplyr::group_by( !!!group_covars, !!treat_var ) %>%
