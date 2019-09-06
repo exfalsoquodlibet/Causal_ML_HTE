@@ -2,7 +2,7 @@
 #' @description Function to plot Conditional Average Treatment Effects for two-way interactions
 #' @author Alessia Tosi
 #' 
-#' @param df_cates Dataset returned by get_cate_woway_inter() function, containing covariates and CATE point estimates and CI bounds
+#' @param x Dataset returned by get_cate_twoway_inter() function, containing covariates and CATE point estimates and CI bounds
 #' @return Plot of Condiional Treatment Effects (CATE) point estimates and their Confidence Intervals
 
 
