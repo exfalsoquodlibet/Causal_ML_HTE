@@ -18,7 +18,7 @@ continuous_to_quantiles <- function(
       checkmate::check_data_frame(dataset)
       
       # check that coninuous variables are indeed coded as integer vectors
-      apply(as.data.frame(dataset[, continuous_vars]), 2, function(x) checkmate::assert(checkmate::check_integer(x)))
+      apply(as.data.frame(dataset[, continuous_vars]), 2, function(x) checkmate::assert(checkmate::check_numeric(x)))
       
       # character vector of new variable names (for the factor of quantiles)
       new_cols <- as.character(sapply(continuous_vars, function(x) paste0(x, '_quant')))
