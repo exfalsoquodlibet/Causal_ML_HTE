@@ -11,9 +11,10 @@ pckgs <- c("dplyr",
       "tidyverse", 
       "stringr", 
       "grf",
+      "caret",
       "ggplot2")
 
-lapply(pckgs, require, character.only=TRUE)
+sapply(pckgs, require, character.only=TRUE)
 
 
 
@@ -22,6 +23,7 @@ lapply(pckgs, require, character.only=TRUE)
 source("functions/CATE_summary_fun.R")    # to calculate conditional average treatment effects
 source("functions/get_cate_twoway_inter.R")
 source("functions/continuous_to_quantiles.R")
+source("functions/plot_cate_twoway_inter.R")
 
 
 ### Data ------
@@ -235,13 +237,39 @@ train_y_hats <- predict(
 
 str(train_y_hats)
 
-### TO DO:
-# Explore goodness of fit !
+
+# Explore goodness of fit ------
+
+sum(train_y_hats$debiased.error, train_y_hats$excess.error)   #raw error
+sum(train_y_hats$debiased.error, train_y_hats$excess.error) / nrow(train_y_hats)  # average error
+with(train_y_hats, plot(predictions ~ debiased.error))
+with(train_y_hats, hist(debiased.error))
+
+sum(train_y_hats$excess.error)   #recommended to grow enough forests to make it negligible
+
+# hard to assess fit of a single model...
 
 
-# Individual-level conditional treatment effects and their associated variance estimates ---
+# Other performance metrics based on classification outcome ---
+# We'll do it based on outcome predictions as there is no "golden truth" for the treatment effects
 
-#let's plot them
+# add predicted individual-level treatment effects to original data
+train_fruit_df$pred_treatm_effect <- train_y_hats$predictions
+train_fruit_df$pred_se_treatm_effect <- sqrt(train_y_hats$variance.estimates)
+
+caret::confusionMatrix(
+      data = factor(dplyr::if_else(fruit_hcf$Y.hat > 0.5, 1, 0), levels=c(1,0)) , 
+      reference = factor(fruit_hcf$Y.orig, levels=c(1,0)) 
+      )
+
+# high recall (sensitivity) : of all those that are acually 1's, how many did we correctly predict (as "1")?
+# low specificity:  of all those who are actually 0's, how many have we correctly predict (as "0")?
+# precision: how many of those who we labeled as "1" are actually 1?   #0.60
+
+
+# Individual-level conditional treatment effects and their associated variance estimates ------
+
+#let's plot them with 95% confidence intervals
 ggplot(train_y_hats,
       mapping = aes(
             x = rank(predictions), 
@@ -278,10 +306,6 @@ fruit_hcf %>%
 # Plot the relationships ---
 # between the top important variables and the predicted treatment effects
 
-# add predicted individual-level treatment effects to original data
-train_fruit_df$pred_treatm_effect <- train_y_hats$predictions
-train_fruit_df$pred_se_treatm_effect <- sqrt(train_y_hats$variance.estimates)
-
 
 # overweight
 ggplot(
@@ -309,12 +333,10 @@ ggplot(
 
 # household income
 ggplot(train_fruit_df, aes(x = hhinc, y = pred_treatm_effect)) +
-      geom_point() +
-      #geom_smooth(method = "lm", span = 1) +
+      geom_point(aes(colour = racename)) +
       geom_smooth(method = "loess", span = 1) +   #smooth local regression
       theme_light()
-# looks like some interaction may begoing on
-# TO DO iterate: add color based on guess covariate
+# looks like some interaction may be going on
 
 
 
@@ -340,7 +362,7 @@ grf::average_treatment_effect(fruit_hcf, target.sample = "all", subset=train_fru
 # Get conditional average treatment effects for all two-way interaction between each level of each categorical covariate ------
 # info: https://github.com/grf-labs/grf/issues/238
 
-# Make sure caegorical covariates are coded as factors
+# Make sure categorical covariates are coded as factors
 train_fruit_df <- train_fruit_df %>%
       mutate(
             malef = factor(male, levels=c(0,1), labels=c('female', 'male')),
@@ -361,44 +383,125 @@ args(get_cate_twoway_inter)
 cates_df <- get_cate_twoway_inter(
       grf_forest = fruit_hcf,
       dataset = train_fruit_df, 
-      cov_idx = 13:19
+      cov_idx = c(13, 16:21)
       )
 
 
-# vizualise them ---
-cates_df <- cates_df %>%
-      mutate(inter_var = interaction(level1, level2, sep=' & '))
+# Vizualise HTEs ---
 
 # too many, so let's only plot a subset
 # for example, only all interactions with race
 cates_df %>%
       filter(var1 %in% c('racename')) %>%
+      plot_cate_twoway_inter(.)
       
-      ggplot(., aes(x = inter_var, y = cate, color = inter_var)) +
-      theme_light() +
-      theme(
-            panel.grid.major.x = element_blank(),
-            panel.grid.minor.x = element_blank(),
-            strip.text.y = element_text(colour = "black"),
-            strip.background = element_rect(colour = NA, fill = NA),
-            legend.position = "none"
-      ) +
-      geom_point() +
-      geom_errorbar(aes(ymin = lb_cate, ymax = ub_cate), width = .2) +
-      geom_hline(yintercept = 0, linetype = 3) +
-      facet_grid(var1 + var2 ~ ., scales = "free_y") +
-      coord_flip()
+      
 
 
-
-
-### TO DO ------
-# turn plotting code into a function
 
 
 
 
 ### Predict on potential future targets ------
-# TO DO!
+
+# We had left aside some data to use as new "unseen" data 
+
+# Prepare test data
+
+test_fruit_df <- test_fruit_df %>%
+      mutate(
+            s_age = scale(age, center = TRUE, scale = TRUE),
+            s_hhinc = scale(hhinc, center = TRUE, scale = TRUE),
+            racename = factor(race, levels=c(1,2,3,4), labels=c('caucasian', 'africanAm', 'asian', 'hispanic'))
+      )
+
+test_X <- model.matrix(~ ., 
+      data = test_fruit_df[, ! names(test_fruit_df) %in% c('chose_fruit', 'treatment', 'cid', 'age', 'hhinc', 'race')]
+)
+
+
+# Predict on test data
+
+test_y_hats <- predict(
+      object = fruit_hcf,
+      newdata = test_X,
+      estimate.variance = TRUE   # for confidence interval (IMPORTANT)
+)
+
+str(test_y_hats)
+
+
+# Assess
+
+# add predicted individual-level treatment effects to original data
+test_fruit_df$pred_treatm_effect <- test_y_hats$predictions
+test_fruit_df$pred_se_treatm_effect <- sqrt(test_y_hats$variance.estimates)
+
+
+# Individual-level conditional treatment effects and their associated variance estimates ---
+
+#let's plot them with 95% confidence intervals
+ggplot(test_y_hats,
+      mapping = aes(
+            x = rank(predictions), 
+            y = predictions
+      )
+) +
+      geom_point() +
+      labs(x = "Test examples", y = "Estimated Treatment Effect") +
+      theme_light() +
+      geom_errorbar(
+            mapping = aes(
+                  ymin = test_y_hats$predictions - 1.96 * sqrt(test_y_hats$variance.estimates),
+                  ymax = test_y_hats$predictions + 1.96 * sqrt(test_y_hats$variance.estimates)
+            )
+      )
+
+# Yep, here again there clearly seem to be heterogenous treatment effects
+
+# distribution of treatment effect point estimates
+with(test_y_hats, hist(predictions, breaks=20))
+
+
+### Who should get the intervention? ------
+
+# Probably the main goal of running a causal machine-learning model is to understand
+# who should be receiving the intervention (if rolled out) and who should not in the future,
+# based on the estimated sub-group or individual treatment effects.
+
+with(test_fruit_df, median(pred_treatm_effect))   # median treatment effect
+
+
+# Option 1: 
+# Intervention, if treatment effect is positive (> 0), control if treatment effect is negative (< 0)
+# We ignore the uncertainty around these point estimates
+
+test_fruit_df <- test_fruit_df %>%
+      mutate(treat_assignment1 = if_else(
+            pred_treatm_effect > 0, 1, 0
+      ))
+
+
+# Option 2: 
+# Intervention, if treatment effect is positive (> 0), control if treatment effect is negative (< 0)
+# and their confidence intervals do not cross 0
+# random assignment (or control?), otherwise ('999' as a sign post atm)
+
+test_fruit_df <- test_fruit_df %>%
+      mutate(
+            lb_te = pred_treatm_effect -1.96*pred_se_treatm_effect,
+            ub_te = pred_treatm_effect +1.96*pred_se_treatm_effect) %>%
+      mutate(treat_assignment2 = if_else(
+            (lb_te > 0) & (ub_te > 0), 1, if_else(
+                  (lb_te < 0) & (ub_te < 0), 0, 999
+            )
+      ))
+
+
+# let's take a look
+
+with(test_fruit_df, xtabs(~ treatment + treat_assignment1))
+with(test_fruit_df, xtabs(~ treatment + treat_assignment2))
+with(test_fruit_df, xtabs(~ treat_assignment1 + treat_assignment2))
 
 
